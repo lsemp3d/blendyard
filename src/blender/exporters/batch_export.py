@@ -1,7 +1,7 @@
 """
 MIT License
 
-Copyright (c) 2020 ossls
+Copyright (c) 2020-2021 ossls
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -30,8 +30,20 @@ SOFTWARE.
 import bpy
 import os
 import sys
+from pathlib import Path
 
 from bpy.app.handlers import persistent
+
+
+def safe_relative_path(full_path, base_path):
+    full_path = Path(full_path).resolve()
+    base_path = Path(base_path).resolve()
+    try:
+        return str(full_path.relative_to(base_path))
+    except ValueError:
+        return str(full_path)  # Return as-is if not a subpath
+
+
 
 basedir = os.path.dirname(bpy.data.filepath)
 view_layer = bpy.context.view_layer
@@ -49,75 +61,141 @@ destinationPath = sys.argv[6]
 # 
 # Currently it only exports the MESH.
 #
-def doExport(fileName):
+def doExport(filePath):
+
+    idx = sys.argv.index("--")
+    custom_args = sys.argv[(idx + 1):] 
+    content_root = custom_args[1]
+
+    print("destinationPath: "  + destinationPath)
+    print("filePath: "  + filePath)
+
+    collection_name = ""
+
+    generatedFBXFiles = []
+
+
+    for collection in bpy.data.collections:
+        collection_name = collection.name
+
+        armature = None
+
+        for obj in bpy.data.objects:
+
+            # Skip non-mesh objects and hidden objects
+            if obj.type != 'MESH' or obj.hide_get():
+                continue
+
+            # Find the armature that belongs to this object
+            for armatureObj in bpy.data.objects:
+                if armatureObj.type == 'ARMATURE':
+                    print("FOUND ARMATURE: " + armatureObj.name)
+                    if armatureObj.parent != None and armatureObj.parent == obj:
+                        print("CHOSE ARMATURE: " + armatureObj.name + " parent: " + armatureObj.parent.name)
+                        armature = armatureObj
+
+            fbxName = f"{collection_name}_{obj.name}.fbx"
+            fileName = f"{filePath}\\{fbxName}"
+
+            # Select only the current object and its armature (if any)
+            bpy.ops.object.select_all(action='DESELECT')
+            obj.select_set(True)
+            bpy.context.view_layer.objects.active = obj
+
+            # Enter Edit Mode for cleanup
+            bpy.ops.object.mode_set(mode='EDIT')
+            bpy.ops.mesh.delete_loose(use_verts=True, use_edges=True, use_faces=False)
+            bpy.ops.mesh.dissolve_degenerate(threshold=0.0001)
+            bpy.ops.mesh.normals_make_consistent(inside=False)
+            bpy.ops.mesh.quads_convert_to_tris()
+            bpy.ops.object.mode_set(mode='OBJECT')  # Back to Object Mode
+
+            # Find and select the armature if it exists
+            if armature != None:
+                armature.select_set(True)
+                bpy.context.view_layer.objects.active = armature
+
+                # Select all bones inside the armature
+                bpy.ops.object.mode_set(mode='POSE')  # Ensure we're in Pose Mode
+                bpy.ops.pose.select_all(action='SELECT')
+
+                for bone in armature.pose.bones:
+                    print("Found bone: " + bone.name)
+                    bone.bone.select = True  # Select each bone
+                    
+                bpy.ops.object.mode_set(mode='OBJECT')  # Switch back to Object Mode
+
+            # Export the selected objects
+            bpy.ops.export_scene.fbx(
+                filepath=fileName,
+                check_existing=True,
+                axis_forward='Y',
+                axis_up='Z',
+                use_selection=True,
+                global_scale=1.0,
+                apply_unit_scale=True,
+                bake_space_transform=False,  # Prevent hierarchy collapse
+                object_types={'MESH', 'ARMATURE'},
+                use_mesh_modifiers=True,
+                mesh_smooth_type='EDGE',
+                use_tspace=True,
+                use_custom_props=False,
+                add_leaf_bones=False,  # Prevent extra bones
+                primary_bone_axis='Y',
+                secondary_bone_axis='X',
+                use_armature_deform_only=True,  # Keep all bones
+                armature_nodetype='NULL',
+                path_mode='AUTO',
+                embed_textures=False,
+                batch_mode='OFF',
+                use_metadata=True,
+                apply_scale_options='FBX_SCALE_NONE',
+            )
+
+            
+                                        
+            view_layer.objects.active = None
+
+            generatedFBXFiles.append(filePath + "\\" + fbxName)
+
+            bpy.ops.object.select_all(action='DESELECT')
+
+            print ("Exported: %s"%fileName)
+
+        content_file = content_root + f"\{collection_name}_content.mgcb"
+        print("CONTENT FILE: " + content_file)
+        with open(content_file, "w") as file:
+
+            file.write("/outputDir:bin/Windows\n")
+            file.write("/intermediateDir:obj/Windows\n")
+            file.write("/platform:Windows\n")
+            file.write("/config:\n")
+            file.write("/profile:HiDef\n")
+            file.write("/compress:False\n\n")
+
+            for generatedFile in generatedFBXFiles:
+                model_path = safe_relative_path(generatedFile, content_root)
+                file.write(f"#begin {model_path}\n")
+                file.write("/importer:FbxImporter\n")
+                file.write("/processor:ModelProcessor\n")
+                file.write("/processorParam:ColorKeyColor=0,0,0,0\n")
+                file.write("/processorParam:ColorKeyEnabled=True\n")
+                file.write("/processorParam:DefaultEffect=BasicEffect\n")
+                file.write("/processorParam:GenerateMipmaps=True\n")
+                file.write("/processorParam:GenerateTangentFrames=False\n")
+                file.write("/processorParam:PremultiplyTextureAlpha=True\n")
+                file.write("/processorParam:PremultiplyVertexColors=True\n")
+                file.write("/processorParam:ResizeTexturesToPowerOfTwo=False\n")
+                file.write("/processorParam:RotationX=0\n")
+                file.write("/processorParam:RotationY=0\n")
+                file.write("/processorParam:RotationZ=0\n")
+                file.write("/processorParam:Scale=1\n")
+                file.write("/processorParam:SwapWindingOrder=False\n")
+                file.write("/processorParam:TextureFormat=DxtCompressed\n")
+                file.write(f"/build:{model_path}\n\n")
+
     
-    if bpy.ops.object.mode_set.poll():
-        bpy.ops.object.mode_set(mode='OBJECT')
 
-    bpy.ops.object.select_all(action='DESELECT')
-    bpy.ops.object.select_all(action='SELECT')
-
-    selection = bpy.context.selected_objects
-    bpy.ops.object.mode_set(mode='EDIT')
-
-    for object in selection:
-        bpy.ops.mesh.select_all(action='SELECT')
-
-        # Cleanup some of the geometry to avoid artifacts
-        bpy.ops.mesh.delete_loose(use_verts=True, use_edges=True, use_faces=False) # Delete loose vertices, edges or faces
-        bpy.ops.mesh.dissolve_degenerate(threshold=0.0001) # Dissolve zero area faces and zero length edges
-        bpy.ops.mesh.normals_make_consistent(inside=False) # Make face and vertex normals point either outside or inside the mesh
-
-        # TODO: Currently I found no benefit to doing any operations on the normals
-        #bpy.ops.mesh.set_normals_from_faces()
-        #bpy.ops.mesh.split_normals()
-        #bpy.ops.mesh.average_normals(average_type='FACE_AREA')
-
-    bpy.ops.export_scene.fbx(   filepath=fileName, 
-                                check_existing=True, 
-                                axis_forward='Y', 
-                                axis_up='Z', 
-                                use_selection=True, 
-                                global_scale=1.0, 
-                                apply_unit_scale=True, 
-                                bake_space_transform=True, 
-                                object_types={'MESH'}, 
-                                use_mesh_modifiers=False, 
-                                use_mesh_modifiers_render=False, 
-                                mesh_smooth_type='EDGE', 
-                                use_mesh_edges=True, 
-                                use_tspace=True, 
-                                use_custom_props=False, 
-                                add_leaf_bones=True, 
-                                primary_bone_axis='Y', 
-                                secondary_bone_axis='X', 
-                                use_armature_deform_only=False, 
-                                armature_nodetype='NULL', 
-                                path_mode='AUTO', 
-                                embed_textures=False, 
-                                batch_mode='OFF', 
-                                use_batch_own_dir=True, 
-                                use_metadata=True 
-                                # filter_glob="*.fbx", 
-                                # version='BIN7400', 
-                                # ui_tab='MAIN', 
-                                # bake_anim=True, 
-                                # bake_anim_use_all_bones=True, 
-                                # bake_anim_use_nla_strips=True, 
-                                # bake_anim_use_all_actions=True, 
-                                # bake_anim_force_startend_keying=True, 
-                                # bake_anim_step=1.0, 
-                                # bake_anim_simplify_factor=1.0, 
-                                # use_anim=True, 
-                                # use_anim_action_all=True, 
-                                # use_default_take=True, 
-                                # use_anim_optimize=True, 
-                                # anim_optimize_precision=6.0, 
-                                )
-                                
-    view_layer.objects.active = None
-
-    print ("Exported: %s"%fileName)
 
 # The load handler will trigger the export
 @persistent
@@ -132,8 +210,8 @@ def load_handler(dummy):
     if not os.path.exists(targetPath):
         os.mkdir(targetPath)
 
-    print("Starting export: %s"%targetFile)
-    doExport(targetFile)
+    print("Starting export: %s"%targetPath)
+    doExport(targetPath)
 
 # Install the load handler
 bpy.app.handlers.load_post.append(load_handler)

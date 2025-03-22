@@ -1,7 +1,7 @@
 """
 MIT License
 
-Copyright (c) 2020 ossls
+Copyright (c) 2020-2021 ossls
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -91,8 +91,11 @@ def InvokeBlenderExporter(**args):
     "--python",
     scriptPath,
     "--",
-    target_file
+    target_file,
+    destination,
     ]
+
+    #print(cmdLine)
 
     subprocess.call(cmdLine)
 
